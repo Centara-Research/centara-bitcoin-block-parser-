@@ -139,8 +139,6 @@ def save_transactions_and_balances(transaction_limit=-1):
                         'timestamp': blk_obj.header.timestamp,
                         'sender': sender_addresses,
                         'receiver': receiver_addresses,
-                        'amount_received': amount_received,
-                        'amount_sent': amount_sent,
                         'individual_sent': sent_amounts,  # Individual sent amounts
                         'individual_received': received_amounts,  # Individual received amounts
                         'fee': fee

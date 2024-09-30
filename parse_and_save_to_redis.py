@@ -94,8 +94,6 @@ def save_transactions_and_balances(transaction_limit=3):
                     'timestamp': blk_obj.header.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
                     'sender': sender_addresses,
                     'receiver': receiver_addresses,
-                    'amount_received': str(amount_received),
-                    'amount_sent': str(amount_sent),
                     'individual_sent': str(sent_amounts),  # Store as a string
                     'individual_received': str(received_amounts),  # Store as a string
                     'fee': fee
