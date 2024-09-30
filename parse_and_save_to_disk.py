@@ -19,26 +19,42 @@ def get_transaction_by_block_height(height, csv_filename):
         print("The CSV file was not found.")
     return None
 
-def get_transactions_by_timestamp(timestamp, csv_filename):
+def get_transactions_by_time_frame(csv_filename,start_timestamp, end_timestamp=None):
     transactions = []
+    
+    # Validate input dates
+    if start_timestamp and end_timestamp and start_timestamp > end_timestamp:
+        print("Error: Start timestamp must be before end timestamp.")
+        return transactions
+
     try:
         with open(csv_filename, mode='r') as csv_file:
             reader = csv.DictReader(csv_file)
             for row in reader:
-                if row['timestamp'] == timestamp:
+                # If no timestamps are provided, skip filtering
+                if start_timestamp is None and end_timestamp is None:
                     transactions.append(row)
+                elif start_timestamp and end_timestamp:
+                    # Filter between the two timestamps
+                    if start_timestamp <= row['timestamp'] <= end_timestamp:
+                        transactions.append(row)
+                elif start_timestamp:
+                    # Filter for transactions matching a single timestamp
+                    if row['timestamp'] == start_timestamp:
+                        transactions.append(row)
     except FileNotFoundError:
         print("The CSV file was not found.")
+    
     return transactions
 
-def save_transactions_and_balances(transaction_limit=3):
+def save_transactions_and_balances(transaction_limit=-1):
     from blockchain_parser.block import Block
-
     total_transactions = 0
     start_time = time.time()
 
     # Initialize the wallet balances dictionary
     wallet_balances = {}
+    transactions_list = []  # List to store transactions for later sorting
 
     with open(csv_filename, mode='w', newline='') as csv_file:
         # Adding 'sent amounts' and 'received amounts' as separate fields
@@ -47,10 +63,11 @@ def save_transactions_and_balances(transaction_limit=3):
         writer.writeheader()
 
         print("Started processing transactions")
-        block_count = 0
-
+        transaction_count = 0
         # Dictionary to hold transaction outputs for reference (UTXO set)
         outputs_dict = {}
+        block_count=0
+        transaction_processing_start_time = time.time()  # Start time for counting blocks
 
         for block in blockchain.get_unordered_blocks():
             block_count += 1
@@ -133,22 +150,39 @@ def save_transactions_and_balances(transaction_limit=3):
                           f"sender: {sender_addresses}, receiver: {receiver_addresses}, amount received: {amount_received}, "
                           f"sent amounts: {sent_amounts}, received amounts: {received_amounts}, fee: {fee}")
 
-                    if total_transactions >= transaction_limit:
-                        print(f"Transaction limit reached: {transaction_limit} transactions.")
-                        break
 
                 except Exception as e:
                     print(f"Error processing transaction {tx_index + 1} in block {blk_obj.hash}: {e}")
                     continue
 
-            if total_transactions >= transaction_limit:
+            if transaction_limit==-1:
+                continue
+            elif total_transactions >= transaction_limit:
                 break
+            
 
-        if block_count == 0:
-            print("No blocks were processed. Please check your block file path and indexing.")
+        if transaction_count == 0:
+            print("No transactions were processed. Please check your block file path and indexing.")
+
+        transaction_processing_time = time.time() - transaction_processing_start_time
+        print(f"Counted {block_count} transactions in {transaction_processing_time:.2f} seconds.")
+
+
+         # Sort transactions by timestamp
+        sorting_start_time = time.time()
+        transactions_list.sort(key=lambda x: x['timestamp'])  # Sort by timestamp
+        sorting_time = time.time() - sorting_start_time
+
+        print(f"Sorted transactions in {sorting_time:.2f} seconds.")
+
+        # Write sorted transactions to CSV
+        for transaction in transactions_list:
+            writer.writerow(transaction)
 
         print(f"Processed {total_transactions} transactions.")
 
+
+        
     # Save the wallet balances to a CSV file
     with open(balances_filename, mode='w', newline='') as balances_file:
         balance_fieldnames = ['wallet_id', 'balance']
@@ -163,7 +197,7 @@ def save_transactions_and_balances(transaction_limit=3):
 
 # Main function to start the process
 def main():
-    save_transactions_and_balances(transaction_limit=3000)
+    #save_transactions_and_balances(100000)
 
     # Test reading by block height
     height_to_search = 33
@@ -174,8 +208,17 @@ def main():
         print(f"No transaction found for block height {height_to_search}.")
 
     # Test reading by timestamp
-    timestamp_to_search = "2010-10-17 12:07:04"  # Enter a valid timestamp
-    transactions = get_transactions_by_timestamp(timestamp_to_search, csv_filename)
+    timestamp_to_search = "2009-10-17 12:07:04"  # Enter a valid timestamp
+    transactions = get_transactions_by_time_frame(csv_filename, timestamp_to_search)
+    if transactions:
+        print(f"Transactions found for timestamp {timestamp_to_search}:")
+        for tx in transactions:
+            print(tx)
+    else:
+        print(f"No transactions found for timestamp {timestamp_to_search}.")
+    
+    timestamp_to_search2 = "2009-10-17 20:07:04"  # Enter a valid timestamp
+    transactions = get_transactions_by_time_frame(csv_filename, timestamp_to_search,timestamp_to_search2)
     if transactions:
         print(f"Transactions found for timestamp {timestamp_to_search}:")
         for tx in transactions:

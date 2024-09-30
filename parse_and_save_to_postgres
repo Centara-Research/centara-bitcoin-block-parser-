@@ -1,0 +1,139 @@
+import time
+import psycopg2
+from blockchain_parser.blockchain import Blockchain
+from blockchain_parser.output import Output
+
+blk_path = '/root/.bitcoin/blocks'
+blockchain = Blockchain(blk_path)
+
+# Connect to PostgreSQL database
+conn = psycopg2.connect(
+    dbname="your_db_name", user="your_username", password="your_password", host="localhost", port="5432"
+)
+cursor = conn.cursor()
+
+def save_transactions_and_balances(transaction_limit=-1):
+    from blockchain_parser.block import Block
+    total_transactions = 0
+    start_time = time.time()
+
+    # Initialize the wallet balances dictionary
+    wallet_balances = {}
+    transactions_list = []  # List to store transactions for later sorting
+    transaction_count = 0
+
+    # Dictionary to hold transaction outputs for reference (UTXO set)
+    outputs_dict = {}
+    block_count = 0
+    transaction_processing_start_time = time.time()  # Start time for counting blocks
+
+    print("Started processing transactions")
+    
+    for block in blockchain.get_unordered_blocks():
+        block_count += 1
+        block_data = block.hex
+
+        try:
+            blk_obj = Block.from_hex(block_data)
+        except Exception as e:
+            print(f"Error processing block {block.hash}: {e}")
+            continue
+
+        for tx_index, tx in enumerate(blk_obj.transactions):
+            try:
+                total_transactions += 1
+
+                # Get sender addresses from inputs and calculate sent amount
+                senders = []
+                sent_amounts = []  # List to store individual sent amounts
+                amount_sent = 0
+
+                for input in tx.inputs:
+                    input_txid = input.transaction_hash
+                    input_index = input.transaction_index
+
+                    if input_txid in outputs_dict and input_index < len(outputs_dict[input_txid]):
+                        previous_output = outputs_dict[input_txid][input_index]
+                        sent_amounts.append(previous_output['value'])  # Store each sent amount
+                        amount_sent += previous_output['value']
+
+                        sender_address = previous_output['addresses'][0].address if previous_output['addresses'] else "Unknown"
+                        senders.append(sender_address)
+
+                        # Update sender's balance
+                        if sender_address != "Unknown":
+                            wallet_balances[sender_address] = wallet_balances.get(sender_address, 0) - previous_output['value']
+
+                # Get receiver addresses and amounts from outputs
+                receivers = []
+                received_amounts = []  # List to store individual received amounts
+                amount_received = 0
+                outputs_dict[tx.txid] = []
+
+                for output in tx.outputs:
+                    output_value = output.value / 100000000  # Convert satoshis to Bitcoin
+                    received_amounts.append(output_value)  # Store each received amount
+                    amount_received += output_value
+
+                    receiver_address = output.addresses[0].address if output.addresses else "Unknown"
+                    receivers.append(receiver_address)
+
+                    # Store the output for future reference (UTXO)
+                    outputs_dict[tx.txid].append({'value': output_value, 'addresses': output.addresses})
+
+                    # Update receiver's balance
+                    if receiver_address != "Unknown":
+                        wallet_balances[receiver_address] = wallet_balances.get(receiver_address, 0) + output_value
+
+                # Calculate transaction fee
+                fee = amount_sent - amount_received if amount_sent > 0 else 0
+
+                # Join senders and receivers into semicolon-separated strings
+                sender_addresses = '; '.join(senders) if senders else "Coinbase"
+                receiver_addresses = '; '.join(receivers) if receivers else "Unknown"
+
+                # Insert the transaction data into the PostgreSQL database
+                cursor.execute("""
+                    INSERT INTO transactions (index, block_hash, timestamp, sender, receiver, amount_received, amount_sent, individual_sent, individual_received, fee)
+                    VALUES (%s, %s, to_timestamp(%s), %s, %s, %s, %s, %s, %s, %s)
+                """, (total_transactions, blk_obj.hash, blk_obj.header.timestamp, sender_addresses, receiver_addresses,
+                      amount_received, amount_sent, sent_amounts, received_amounts, fee))
+
+                print(f"index: {total_transactions}, block_hash: {blk_obj.hash}, timestamp: {blk_obj.header.timestamp}, "
+                      f"sender: {sender_addresses}, receiver: {receiver_addresses}, amount received: {amount_received}, "
+                      f"sent amounts: {sent_amounts}, received amounts: {received_amounts}, fee: {fee}")
+
+            except Exception as e:
+                print(f"Error processing transaction {tx_index + 1} in block {blk_obj.hash}: {e}")
+                continue
+
+        if transaction_limit == -1:
+            continue
+        elif total_transactions >= transaction_limit:
+            break
+
+    # Save wallet balances to PostgreSQL
+    for wallet, balance in wallet_balances.items():
+        cursor.execute("""
+            INSERT INTO wallet_balances (wallet_id, balance)
+            VALUES (%s, %s)
+            ON CONFLICT (wallet_id) DO UPDATE SET balance = EXCLUDED.balance
+        """, (wallet, balance))
+
+    # Commit all transactions to the database
+    conn.commit()
+
+    transaction_processing_time = time.time() - transaction_processing_start_time
+    print(f"Processed {total_transactions} transactions in {transaction_processing_time:.2f} seconds.")
+
+
+# Main function to start the process
+def main():
+    save_transactions_and_balances(100000)
+
+if __name__ == "__main__":
+    main()
+
+# Close the database connection at the end of the script
+cursor.close()
+conn.close()
